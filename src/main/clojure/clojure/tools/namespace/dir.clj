@@ -12,6 +12,7 @@
   clojure.tools.namespace.dir
   (:require [clojure.tools.namespace.file :as file]
             [clojure.tools.namespace.find :as find]
+            [clojure.tools.namespace.parse :as parse]
             [clojure.tools.namespace.track :as track]
             [clojure.java.classpath :refer [classpath-directories]]
             [clojure.java.io :as io]
@@ -19,12 +20,30 @@
             [clojure.string :as string])
   (:import (java.io File) (java.util.regex Pattern)))
 
-(defn- find-files [dirs platform]
+(defn- path-matches-ns?
+  "True if the namespace declaration of file matches its path relative
+  to dir."
+  [dir file]
+  (let [decl (file/read-file-ns-decl file)
+        ns (parse/name-from-ns-decl decl)
+        correct-path (str (.getPath dir)
+                          File/separator
+                          (-> (name ns)
+                              (string/replace "-" "_")
+                              (string/replace "." File/separator))) ]
+    (.startsWith (.getPath file) correct-path)))
+
+(defn- find-files
+  "Finds source files for platform in directory for which the path
+  matches the namespace declaration."
+  [dirs platform]
   (->> dirs
        (map io/file)
        (map #(.getCanonicalFile ^File %))
        (filter #(.exists ^File %))
-       (mapcat #(find/find-sources-in-dir % platform))
+       (mapcat (fn [dir]
+                 (filter #(path-matches-ns? dir %)
+                         (find/find-sources-in-dir dir platform))))
        (map #(.getCanonicalFile ^File %))))
 
 (defn- modified-files [tracker files]
@@ -75,6 +94,9 @@
 
   dirs is the collection of directories to scan, defaults to all
   directories on Clojure's classpath.
+
+  Ignores files for which the namespace declaration does not match the
+  path.
 
   Optional third argument is map of options:
 

@@ -1,9 +1,8 @@
 (ns clojure.tools.namespace.find-test
-  (:require [clojure.test :refer [deftest is]]
-            [clojure.java.io :as io]
+  (:require [clojure.java.io :as io]
+            [clojure.test :refer [deftest is]]
             [clojure.tools.namespace.test-helpers :as help]
-            [clojure.tools.namespace.find :as find])
-  (:import (java.io File)))
+            [clojure.tools.namespace.find :as find]))
 
 (deftest t-find-clj-and-cljc-files
   "main.clj depends on one.cljc which depends on two.clj.
@@ -29,14 +28,15 @@
          [main-cljs one-cljc two-cljs]
          (find/find-sources-in-dir dir find/cljs)))))
 
-(deftest t-invalid-ns-path
-  "example.one namespace is defined in cljc file and can be found
-  at two different paths on the classpath, in other case
-  the path doesn't match namespace."
+(deftest t-include-invalid-ns-path
+  ;; c.t.n.find will find all files with valid extensions, regardless
+  ;; of whether or not their namespace declarations match their paths
   (let [dir (help/create-temp-dir "t-invalid-ns-path")
         main-clj (help/create-source dir 'example.main :clj '[example.one])
         one-cljc (help/create-source dir 'example.one :cljc)
-        one-cljc-copy (io/file dir "public/js/out/example/one.cljc")]
-    (io/copy one-cljc (doto one-cljc-copy (io/make-parents)))
-
-    (is (= [main-clj one-cljc] (find/find-sources-in-dir dir)))))
+        one-cljc-copy (help/create-copy
+                       one-cljc
+                       (io/file dir "public/js/out/example/one.cljc"))]
+    (is (help/same-files?
+         [main-clj one-cljc one-cljc-copy]
+         (find/find-sources-in-dir dir)))))
