@@ -20,10 +20,37 @@
             [clojure.string :as string])
   (:import (java.io File) (java.util.regex Pattern)))
 
+(set! *warn-on-reflection* true)
+
+(def ^:private ^:dynamic *path-mismatch-dirs*
+  "Set of classpath directories found with extra source files whose
+  paths do not match their ns declarations. Used to print warnings and
+  filter out paths with non-canonical copies of source files, such as
+  .cljc files copied into resources/public."
+  nil)
+
+(defn- add-mismatch-dir [^File dir]
+  (when (thread-bound? #'*path-mismatch-dirs*)
+    (set! *path-mismatch-dirs* (conj *path-mismatch-dirs* dir))
+    (binding [*err* *out*]
+      (println "tools.namespace: ignoring invalid ns paths in"
+               (.getPath dir)))))
+
+(defn- mismatch-dir?
+  "True if the directory has already been identified as containing
+  files for which the ns declarations do not match the file paths, for
+  example .cljc files copied into resources/public. Prints
+  notification to *err*."
+  [^File dir]
+  (when (contains? *path-mismatch-dirs* dir)
+    (binding [*err* *out*]
+      (println "tools.namespace: ignoring" (.getPath dir)))
+    true))
+
 (defn- path-matches-ns?
   "True if the namespace declaration of file matches its path relative
   to dir."
-  [dir file]
+  [^File dir ^File file]
   (let [decl (file/read-file-ns-decl file)
         ns (parse/name-from-ns-decl decl)
         correct-path (str (.getPath dir)
@@ -31,7 +58,10 @@
                           (-> (name ns)
                               (string/replace "-" "_")
                               (string/replace "." File/separator))) ]
-    (.startsWith (.getPath file) correct-path)))
+    (if (.startsWith (.getPath file) correct-path)
+      true
+      (do (add-mismatch-dir dir)
+          false))))
 
 (defn- find-files
   "Finds source files for platform in directory for which the path
@@ -40,6 +70,7 @@
   (->> dirs
        (map io/file)
        (map #(.getCanonicalFile ^File %))
+       (remove mismatch-dir?)
        (filter #(.exists ^File %))
        (mapcat (fn [dir]
                  (filter #(path-matches-ns? dir %)
@@ -95,8 +126,8 @@
   dirs is the collection of directories to scan, defaults to all
   directories on Clojure's classpath.
 
-  Ignores files for which the namespace declaration does not match the
-  path.
+  Ignores directories containing files for which the namespace
+  declaration does not match the path: prints a warning.
 
   Optional third argument is map of options:
 
@@ -111,7 +142,10 @@
   ([tracker dirs] (scan-dirs tracker dirs nil))
   ([tracker dirs {:keys [platform add-all?] :as options}]
    (let [ds (or (seq dirs) (classpath-directories))]
-     (scan-files tracker (find-files ds platform) options))))
+     (binding [*path-mismatch-dirs* (::path-mismatch-dirs tracker #{})]
+       (-> tracker
+           (scan-files (find-files ds platform) options)
+           (assoc ::path-mismatch-dirs *path-mismatch-dirs*))))))
 
 (defn scan
   "DEPRECATED: replaced by scan-dirs.
