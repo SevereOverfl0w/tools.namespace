@@ -31,12 +31,28 @@
 
 (defn- add-mismatch-dir [^File dir]
   (when (thread-bound? #'*path-mismatch-dirs*)
-    (set! *path-mismatch-dirs* (conj *path-mismatch-dirs* dir))
-    (binding [*err* *out*]
-      (println "tools.namespace: ignoring invalid ns paths in"
-               (.getPath dir)))))
+    (set! *path-mismatch-dirs* (conj *path-mismatch-dirs* dir))))
 
-(defn- mismatch-dir?
+(defn- relative
+  "Returns a java.io.File representing the path to file relative to
+  dir. Like java.nio.file.Path.relativize() but compatible with Java
+  1.6."
+  ^File [^File dir ^File file]
+  (loop [parts ()
+         ^File current file]
+    (cond
+      (nil? current)  nil
+      (= current dir) (apply io/file parts)
+      :else           (recur (conj parts (.getName current))
+                             (.getParentFile current)))))
+
+(defn- warn-path-mismatch [^File dir ^File file]
+  (binding [*err* *out*]
+    (println "tools.namespace: ignoring directory" (.getPath dir)
+             "because the ns declaration in" (.getPath (relative dir file))
+             "does not match its path")))
+
+(defn- mismatch-path?
   "True if the directory has already been identified as containing
   files for which the ns declarations do not match the file paths, for
   example .cljc files copied into resources/public. Prints
@@ -44,7 +60,7 @@
   [^File dir]
   (when (contains? *path-mismatch-dirs* dir)
     (binding [*err* *out*]
-      (println "tools.namespace: ignoring" (.getPath dir)))
+      (println "tools.namespace: ignoring directory" (.getPath dir)))
     true))
 
 (defn- path-matches-ns?
@@ -60,7 +76,8 @@
                               (string/replace "." File/separator))) ]
     (if (.startsWith (.getPath file) correct-path)
       true
-      (do (add-mismatch-dir dir)
+      (do (warn-path-mismatch dir file)
+          (add-mismatch-dir dir)
           false))))
 
 (defn- find-files
@@ -70,8 +87,8 @@
   (->> dirs
        (map io/file)
        (map #(.getCanonicalFile ^File %))
-       (remove mismatch-dir?)
        (filter #(.exists ^File %))
+       (remove mismatch-path?)
        (mapcat (fn [dir]
                  (filter #(path-matches-ns? dir %)
                          (find/find-sources-in-dir dir platform))))
