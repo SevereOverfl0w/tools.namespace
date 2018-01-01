@@ -47,10 +47,12 @@
                              (.getParentFile current)))))
 
 (defn- warn-path-mismatch [^File dir ^File file]
-  (binding [*err* *out*]
-    (println "tools.namespace: ignoring directory" (.getPath dir)
-             "because the ns declaration in" (.getPath (relative dir file))
-             "does not match its path")))
+  (let [relative-path (.getPath (relative dir file))
+        ns-name (second (file/read-file-ns-decl file))]
+    (binding [*err* *out*]
+      (println (str "tools.namespace: ignoring directory " (.getPath dir)
+                    "\n\tbecause the ns declaration " ns-name
+                    "\n\tdoes not match the path " relative-path)))))
 
 (defn- mismatch-path?
   "True if the directory has already been identified as containing
