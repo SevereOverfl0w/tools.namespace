@@ -33,6 +33,10 @@
   (when (thread-bound? #'*path-mismatch-dirs*)
     (set! *path-mismatch-dirs* (conj *path-mismatch-dirs* dir))))
 
+(defn- remove-mismatch-dir [^File dir]
+  (when (thread-bound? #'*path-mismatch-dirs*)
+    (set! *path-mismatch-dirs* (disj *path-mismatch-dirs* dir))))
+
 (defn- relative
   "Returns a java.io.File representing the path to file relative to
   dir. Like java.nio.file.Path.relativize() but compatible with Java
@@ -61,8 +65,6 @@
   notification to *err*."
   [^File dir]
   (when (contains? *path-mismatch-dirs* dir)
-    (binding [*err* *out*]
-      (println "tools.namespace: ignoring directory" (.getPath dir)))
     true))
 
 (defn- path-matches-ns?
@@ -76,11 +78,7 @@
                           (-> (name ns)
                               (string/replace "-" "_")
                               (string/replace "." File/separator))) ]
-    (if (.startsWith (.getPath file) correct-path)
-      true
-      (do (warn-path-mismatch dir file)
-          (add-mismatch-dir dir)
-          false))))
+    (.startsWith (.getPath file) correct-path)))
 
 (defn- find-files
   "Finds source files for platform in directory for which the path
@@ -90,10 +88,26 @@
        (map io/file)
        (map #(.getCanonicalFile ^File %))
        (filter #(.exists ^File %))
-       (remove mismatch-path?)
        (mapcat (fn [dir]
-                 (filter #(path-matches-ns? dir %)
-                         (find/find-sources-in-dir dir platform))))
+                 (let [sources (find/find-sources-in-dir dir platform)]
+                   (if (mismatch-path? dir)
+                     (if (every? #(path-matches-ns? dir %) sources)
+                       (do (binding [*err* *out*]
+                             (println (str "tools.namespace: directory " (.getPath ^File dir) " no longer contains mismatched"
+                                           "\n\tnamespace declarations, no longer ignoring the directory.")))
+                           (remove-mismatch-dir dir)
+                           sources)
+                       (do (binding [*err* *out*]
+                             (println "tools.namespace: ignoring directory" (.getPath ^File dir)))
+                           nil))
+                     (filter (fn [source]
+                               (if (path-matches-ns? dir source)
+                                 source
+                                 (do
+                                   (warn-path-mismatch dir source)
+                                   (add-mismatch-dir dir)
+                                   nil)))
+                             sources)))))
        (map #(.getCanonicalFile ^File %))))
 
 (defn- modified-files [tracker files]
